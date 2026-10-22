@@ -1,0 +1,58 @@
+name: Athena RE-CS-02 LEDE
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: 'Compile firmware after configuration validation'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache
+          df -h
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3 python3-setuptools python3-pyelftools rsync unzip zlib1g-dev file wget curl subversion swig time xsltproc libelf-dev device-tree-compiler ccache cmake ninja-build pkgconf
+      - name: Update feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+      - name: Validate device profile exists
+        run: |
+          test -d target/linux/qualcommax/ipq60xx || { echo 'Missing qualcommax/ipq60xx target'; exit 1; }
+          grep -R -q 'jdcloud_re-cs-02' target/linux/qualcommax/image || { echo 'RE-CS-02 image definition missing'; exit 1; }
+      - name: Configure
+        run: |
+          cp configs/athena-base.config .config
+          make defconfig
+          grep -q '^CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y$' .config || { echo 'Device selection not retained'; exit 1; }
+          grep -E '^(CONFIG_TARGET_|CONFIG_PACKAGE_luci=)' .config | head -60
+      - name: Upload validated configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-config
+          path: .config
+          include-hidden-files: true
+      - name: Download sources
+        if: inputs.build
+        run: make download -j4
+      - name: Build
+        if: inputs.build
+        run: make -j2 V=s
+      - name: Upload firmware and manifests
+        if: inputs.build
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-unverified-firmware
+          path: |
+            bin/targets/qualcommax/ipq60xx/*
+          if-no-files-found: error
